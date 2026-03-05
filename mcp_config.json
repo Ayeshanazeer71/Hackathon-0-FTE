@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+    "email": {
+      "command": "node",
+      "args": ["email_mcp_server.js"],
+      "cwd": ".",
+      "env": {
+        "GMAIL_USER": "your.email@gmail.com",
+        "GMAIL_APP_PASSWORD": "your-16-char-app-password"
+      }
+    },
+    "odoo": {
+      "command": "node",
+      "args": ["odoo_mcp_server.js"],
+      "cwd": ".",
+      "env": {
+        "ODOO_URL": "http://localhost:8069",
+        "ODOO_DB": "ai_employee_db",
+        "ODOO_USERNAME": "admin",
+        "ODOO_PASSWORD": "changeme123"
+      }
+    },
+    "social": {
+      "command": "node",
+      "args": ["social_mcp_server.js"],
+      "cwd": ".",
+      "env": {
+        "META_ACCESS_TOKEN": "your_meta_token",
+        "META_PAGE_ID": "your_page_id",
+        "INSTAGRAM_ACCOUNT_ID": "your_ig_account_id",
+        "TWITTER_API_KEY": "your_twitter_key",
+        "TWITTER_API_SECRET": "your_twitter_secret",
+        "TWITTER_ACCESS_TOKEN": "your_twitter_token",
+        "TWITTER_ACCESS_SECRET": "your_twitter_access_secret",
+        "TWITTER_BEARER_TOKEN": "your_twitter_bearer"
+      }
+    },
+    "logging": {
+      "command": "node",
+      "args": ["logging_mcp_server.js"],
+      "cwd": ".",
+      "env": {}
+    }
+  }
+}

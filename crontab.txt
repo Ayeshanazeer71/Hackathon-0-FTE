@@ -1,0 +1,38 @@
+# AI Employee System - Crontab Configuration
+# Edit with: crontab -e
+# View with: crontab -l
+
+# Environment setup
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+PYTHON=python3
+
+# ============================================
+# WEEKLY CEO BRIEFING
+# Every Sunday at 9:00 PM
+# ============================================
+0 21 * * 0 cd /path/to/your/project && python3 ceo_briefing_generator.py >> Logs/crontab_ceo_briefing.log 2>&1
+
+# ============================================
+# SOCIAL MEDIA WATCHER
+# Check inbox every 30 minutes
+# ============================================
+*/30 * * * * cd /path/to/your/project && python3 social_media_watcher.py process >> Logs/crontab_social.log 2>&1
+
+# ============================================
+# TWITTER WATCHER
+# Check mentions every 60 minutes
+# ============================================
+0 * * * * cd /path/to/your/project && python3 twitter_watcher.py mentions >> Logs/crontab_twitter.log 2>&1
+
+# ============================================
+# DAILY HEALTH CHECK
+# Every day at 8:00 AM
+# ============================================
+0 8 * * * cd /path/to/your/project && python3 orchestrator.py health >> Logs/crontab_health.log 2>&1
+
+# ============================================
+# LOG ROTATION
+# Every Sunday at 11:00 PM (after briefing)
+# ============================================
+0 23 * * 0 cd /path/to/your/project && python3 -c "import json,os; from pathlib import Path; logs=Path('Logs'); [f.unlink() for f in logs.glob('*.json') if (f.stat().st_mtime < (os.path.getmtime(__file__) - 2592000))]" >> Logs/crontab_rotation.log 2>&1

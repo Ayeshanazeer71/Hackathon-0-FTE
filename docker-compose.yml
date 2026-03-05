@@ -1,0 +1,37 @@
+services:
+  # Odoo 19 Community Edition
+  odoo:
+    image: odoo:19
+    container_name: odoo19_community
+    restart: unless-stopped
+    ports:
+      - "8069:8069"
+    depends_on:
+      - db
+    environment:
+      - HOST=db
+      - PORT=5432
+      - ODOO_DB_NAME=${ODOO_DB_NAME:-ai_employee_db}
+      - USER=${POSTGRES_USER:-odoo}
+      - PASSWORD=${POSTGRES_PASSWORD:-odoo_secure_pass}
+      - ADMIN_PASSWORD=${ODOO_ADMIN_PASSWORD:-changeme123}
+    volumes:
+      - odoo-web-data:/var/lib/odoo
+      - ./odoo/addons:/mnt/extra-addons
+      - ./odoo/logs:/var/log/odoo
+
+  # PostgreSQL 15 Database
+  db:
+    image: postgres:15
+    container_name: odoo19_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-odoo}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-odoo_secure_pass}
+      - POSTGRES_DB=postgres
+    volumes:
+      - odoo-db-data:/var/lib/postgresql/data
+
+volumes:
+  odoo-web-data:
+  odoo-db-data:

@@ -1,0 +1,7 @@
+# Approved Email Contacts
+# Add one email address per line
+# Emails to non-approved contacts will be saved as drafts instead of sent
+
+# Add your approved contacts below:
+ma9400667@gmail.com
+

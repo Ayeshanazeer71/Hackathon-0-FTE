@@ -1,0 +1,49 @@
+# Environment files (contains sensitive credentials)
+.env
+.env_odoo
+.env.local
+.env.*.local
+
+# Odoo data directories
+odoo/
+
+# Docker volumes
+*.db
+
+# Logs
+Logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+
+# WhatsApp session (contains authentication data)
+whatsapp_session/
+
+# PID files (runtime process IDs)
+pids/
+
+# State files (contains runtime state)
+ralph_state/
+
+# Vault and sensitive data directories
+AI_Employee_Vault/
+Drafts/
+Accounting/
+
+# Temporary files
+*.tmp
+*.bak
