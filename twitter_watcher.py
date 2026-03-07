@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Twitter/X Automation Script
-Uses Tweepy with Twitter API v2
+Uses Tweepy with Twitter API v1.1 (Free Tier)
 """
 
 import os
@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Optional, List
 import tweepy
 import schedule
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration from environment
 TWITTER_API_KEY = os.environ.get('TWITTER_API_KEY', '')
@@ -68,16 +72,11 @@ def log_action(action: str, details: dict, result: str = 'success') -> None:
         json.dump(logs, f, indent=2)
 
 
-def get_twitter_client() -> tweepy.Client:
-    """Create and return authenticated Twitter client"""
-    return tweepy.Client(
-        bearer_token=TWITTER_BEARER_TOKEN,
-        consumer_key=TWITTER_API_KEY,
-        consumer_secret=TWITTER_API_SECRET,
-        access_token=TWITTER_ACCESS_TOKEN,
-        access_token_secret=TWITTER_ACCESS_SECRET,
-        wait_on_rate_limit=True
-    )
+def get_twitter_client() -> tweepy.API:
+    """Create and return authenticated Twitter API v1.1 client"""
+    auth = tweepy.OAuth1UserHandler(TWITTER_API_KEY, TWITTER_API_SECRET)
+    auth.set_access_token(TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET)
+    return tweepy.API(auth, wait_on_rate_limit=True)
 
 
 def truncate_tweet(text: str) -> tuple[str, bool]:
@@ -212,23 +211,24 @@ def post_tweet(text: str) -> dict:
 def _execute_tweet(text: str) -> dict:
     """
     Internal function to actually execute the tweet after approval.
+    Uses Twitter API v1.1
     """
     try:
         client = get_twitter_client()
-        
-        # Post the tweet
-        response = client.create_tweet(text=text)
-        
-        if 'data' in response and 'id' in response['data']:
-            tweet_id = response['data']['id']
-            tweet_url = f"https://twitter.com/user/status/{tweet_id}"
-            
+
+        # Post the tweet using v1.1 API
+        tweet = client.update_status(status=text)
+
+        if tweet and tweet.id:
+            tweet_id = str(tweet.id)
+            tweet_url = f"https://twitter.com/{tweet.user.screen_name}/status/{tweet_id}"
+
             log_action('post_tweet', {
                 'text_preview': text[:100],
                 'tweet_id': tweet_id,
                 'tweet_url': tweet_url
             }, 'success')
-            
+
             return {
                 'success': True,
                 'tweet_id': tweet_id,
@@ -239,7 +239,7 @@ def _execute_tweet(text: str) -> dict:
             error = 'Unknown error posting tweet'
             log_action('post_tweet', {'error': error}, 'error')
             return {'success': False, 'error': error}
-            
+
     except tweepy.TweepyException as e:
         error_msg = str(e)
         log_action('post_tweet', {'error': error_msg}, 'error')
@@ -252,53 +252,40 @@ def _execute_tweet(text: str) -> dict:
 
 def get_twitter_summary() -> dict:
     """
-    Fetches last 7 days: tweet count, total impressions, total likes, followers gained
+    Fetches last 7 days: tweet count, total likes, followers count
     Saves to ./Briefings/twitter_summary.md
-    
+    Note: Twitter API v1.1 doesn't provide impression metrics
+
     Returns:
         dict with summary data
     """
     try:
         client = get_twitter_client()
-        
-        # Get authenticated user's ID
-        me = client.get_me(user_auth=True)
-        user_id = me['data']['id']
-        username = me['data']['username']
-        current_followers = me['data'].get('public_metrics', {}).get('followers_count', 0)
-        
-        # Calculate date range (7 days ago)
-        seven_days_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        
-        # Get tweets from last 7 days with metrics
-        tweets = client.get_users_tweets(
-            id=user_id,
-            max_results=100,
-            tweet_fields=['created_at', 'public_metrics', 'text'],
-            start_time=seven_days_ago,
-            user_auth=True
-        )
-        
+
+        # Get authenticated user's info
+        me = client.verify_credentials()
+        username = me.screen_name
+        current_followers = me.followers_count
+
+        # Get tweets from timeline (last 200 tweets)
+        tweets = client.home_timeline(count=200)
+
         total_tweets = 0
-        total_impressions = 0
         total_likes = 0
         total_retweets = 0
         total_replies = 0
-        
-        if tweets and 'data' in tweets:
-            for tweet in tweets['data']:
-                total_tweets += 1
-                metrics = tweet.get('public_metrics', {})
-                total_impressions += metrics.get('impression_count', 0)
-                total_likes += metrics.get('like_count', 0)
-                total_retweets += metrics.get('retweet_count', 0)
-                total_replies += metrics.get('reply_count', 0)
-        
-        # Get follower count from 7 days ago (approximation via timeline analysis)
-        # Note: Twitter API v2 doesn't provide historical follower counts directly
-        # This is an estimate based on available data
-        followers_gained = 0  # Would need historical data for accurate calculation
-        
+        seven_days_ago = datetime.now() - timedelta(days=7)
+
+        # Filter tweets from last 7 days
+        for tweet in tweets:
+            # Check if tweet is from this user and within 7 days
+            if tweet.created_at.replace(tzinfo=None) >= seven_days_ago:
+                if tweet.user.id == me.id:
+                    total_tweets += 1
+                    total_likes += tweet.favorite_count
+                    total_retweets += tweet.retweet_count
+                    total_replies += 0  # Reply count not available in v1.1
+
         # Create summary markdown
         summary_md = f"""# Twitter Summary - Last 7 Days
 
@@ -310,40 +297,36 @@ def get_twitter_summary() -> dict:
 | Metric | Value |
 |--------|-------|
 | Tweets Posted | {total_tweets} |
-| Total Impressions | {total_impressions:,} |
 | Total Likes | {total_likes:,} |
 | Total Retweets | {total_retweets:,} |
-| Total Replies | {total_replies:,} |
 | Current Followers | {current_followers:,} |
-| Avg Impressions/Tweet | {total_impressions / total_tweets if total_tweets > 0 else 0:,.0f} |
 | Avg Likes/Tweet | {total_likes / total_tweets if total_tweets > 0 else 0:,.1f} |
 
 ## Period
-From: {seven_days_ago}
-To: {datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}
+From: {seven_days_ago.strftime('%Y-%m-%d %H:%M:%S')}
+To: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ---
 *Generated by Twitter Watcher*
+*Note: Impressions not available in free API tier*
 """
-        
+
         # Save to Briefings
         summary_file = BRIEFINGS_DIR / 'twitter_summary.md'
         with open(summary_file, 'w', encoding='utf-8') as f:
             f.write(summary_md)
-        
+
         log_action('get_twitter_summary', {
             'total_tweets': total_tweets,
-            'total_impressions': total_impressions,
             'total_likes': total_likes,
             'current_followers': current_followers
         }, 'success')
-        
+
         return {
             'success': True,
             'total_tweets': total_tweets,
-            'total_impressions': total_impressions,
             'total_likes': total_likes,
-            'followers_gained': followers_gained,
+            'total_retweets': total_retweets,
             'current_followers': current_followers,
             'summary_file': str(summary_file)
         }
@@ -360,78 +343,67 @@ def check_mentions() -> dict:
     """
     Fetches unread mentions containing keywords: invoice, help, price, urgent
     Creates .md file in Needs_Action/ for each matched mention
-    
+    Uses Twitter API v1.1
+
     Returns:
         dict with results
     """
     try:
         client = get_twitter_client()
-        
-        # Get authenticated user's ID
-        me = client.get_me(user_auth=True)
-        user_id = me['data']['id']
-        username = me['data']['username']
-        
-        # Get mentions from last 24 hours
-        since = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        
-        mentions = client.get_users_mentions(
-            id=user_id,
-            max_results=100,
-            tweet_fields=['created_at', 'author_id', 'text', 'public_metrics'],
-            user_fields=['username', 'name'],
-            expansions=['author_id'],
-            since=since,
-            user_auth=True
-        )
-        
+
+        # Get authenticated user's info
+        me = client.verify_credentials()
+        username = me.screen_name
+        user_id = me.id
+
+        # Get mentions from last 24 hours (v1.1 API)
+        mentions = client.mentions_timeline(count=100)
+
         matched_mentions = []
-        
-        if mentions and 'data' in mentions:
-            # Build user lookup dict
-            users = {}
-            if 'includes' in mentions and 'users' in mentions['includes']:
-                for user in mentions['includes']['users']:
-                    users[user['id']] = user
-            
-            for mention in mentions['data']:
-                text = mention.get('text', '').lower()
-                
-                # Check if contains monitored keywords
-                matched_keywords = [kw for kw in MONITOR_KEYWORDS if kw in text]
-                
-                if matched_keywords:
-                    author = users.get(mention['author_id'], {})
-                    author_username = author.get('username', 'unknown')
-                    author_name = author.get('name', 'Unknown')
-                    
-                    # Check if negative/angry - don't auto-reply to these
-                    is_safe, negative_keywords = check_content_safety(text)
-                    
-                    mention_data = {
-                        'tweet_id': mention['id'],
-                        'author_username': author_username,
-                        'author_name': author_name,
-                        'text': mention['text'],
-                        'matched_keywords': matched_keywords,
-                        'created_at': mention['created_at'],
-                        'is_negative': not is_safe,
-                        'negative_keywords': negative_keywords,
-                        'metrics': mention.get('public_metrics', {})
+        twenty_four_hours_ago = datetime.now() - timedelta(hours=24)
+
+        for mention in mentions:
+            # Filter by time (last 24 hours)
+            if mention.created_at.replace(tzinfo=None) < twenty_four_hours_ago:
+                continue
+
+            text = mention.text.lower()
+
+            # Check if contains monitored keywords
+            matched_keywords = [kw for kw in MONITOR_KEYWORDS if kw in text]
+
+            if matched_keywords:
+                # Check if negative/angry - don't auto-reply to these
+                is_safe, negative_keywords = check_content_safety(text)
+
+                mention_data = {
+                    'tweet_id': str(mention.id),
+                    'author_username': mention.user.screen_name,
+                    'author_name': mention.user.name,
+                    'text': mention.text,
+                    'matched_keywords': matched_keywords,
+                    'created_at': mention.created_at.isoformat(),
+                    'is_negative': not is_safe,
+                    'negative_keywords': negative_keywords,
+                    'metrics': {
+                        'like_count': mention.favorite_count,
+                        'retweet_count': mention.retweet_count,
+                        'reply_count': 0  # Not available in v1.1
                     }
-                    matched_mentions.append(mention_data)
-                    
-                    # Create action file
-                    create_action_file(mention_data, username)
-        
+                }
+                matched_mentions.append(mention_data)
+
+                # Create action file
+                create_action_file(mention_data, username)
+
         log_action('check_mentions', {
-            'total_mentions': len(matched_mentions) if mentions and 'data' in mentions else 0,
+            'total_mentions': len(matched_mentions),
             'matched_keywords': len(matched_mentions)
         }, 'success')
-        
+
         return {
             'success': True,
-            'mentions_checked': len(matched_mentions) if mentions and 'data' in mentions else 0,
+            'mentions_checked': len(mentions),
             'matched_mentions': len(matched_mentions),
             'action_files_created': len(matched_mentions)
         }

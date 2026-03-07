@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Optional
 import requests
 import schedule
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration from environment
 META_ACCESS_TOKEN = os.environ.get('META_ACCESS_TOKEN', '')
@@ -226,37 +230,57 @@ def _execute_facebook_post(text: str, image_path: Optional[str] = None) -> dict:
 def post_to_instagram(image_path: str, caption: str) -> dict:
     """
     Posts image + caption to Instagram Business account
-    
+
     Args:
-        image_path: Path to image file (must exist locally)
+        image_path: Path to image file or URL (must exist locally or be a valid HTTP URL)
         caption: Instagram caption
-    
+
     Returns:
         dict with post status and details
     """
-    # Validate image exists
-    if not os.path.exists(image_path):
+    # Validate image exists or is a valid URL
+    is_url = image_path.startswith('http://') or image_path.startswith('https://')
+    if not is_url and not os.path.exists(image_path):
         error_msg = f"Image not found: {image_path}"
         log_action('post_to_instagram', {'image_path': image_path, 'blocked': True}, 'error')
         return {'success': False, 'error': error_msg}
     
+    # If it's a URL, verify it's accessible
+    if is_url:
+        try:
+            head_response = requests.head(image_path, timeout=10, allow_redirects=True)
+            if head_response.status_code != 200:
+                error_msg = f"Image URL not accessible: {image_path} (Status: {head_response.status_code})"
+                log_action('post_to_instagram', {'image_url': image_path, 'blocked': True}, 'error')
+                return {'success': False, 'error': error_msg}
+            # Check content type
+            content_type = head_response.headers.get('Content-Type', '')
+            if not content_type.startswith('image/'):
+                error_msg = f"URL does not point to an image: {image_path} (Content-Type: {content_type})"
+                log_action('post_to_instagram', {'image_url': image_path, 'blocked': True}, 'error')
+                return {'success': False, 'error': error_msg}
+        except Exception as e:
+            error_msg = f"Failed to verify image URL: {str(e)}"
+            log_action('post_to_instagram', {'image_url': image_path, 'blocked': True}, 'error')
+            return {'success': False, 'error': error_msg}
+
     # Safety check
     is_safe, found_keywords = check_content_safety(caption)
     if not is_safe:
         error_msg = f"Content blocked: contains forbidden keywords: {found_keywords}"
         log_action('post_to_instagram', {'caption_preview': caption[:100], 'blocked': True}, 'error')
         return {'success': False, 'error': error_msg}
-    
+
     # Rate limit check
     daily_count = get_daily_post_count()
     if daily_count >= MAX_POSTS_PER_DAY:
         error_msg = f"Daily post limit reached ({MAX_POSTS_PER_DAY} posts)"
         log_action('post_to_instagram', {'blocked': True, 'reason': 'rate_limit'}, 'error')
         return {'success': False, 'error': error_msg}
-    
+
     # Save to pending first
     pending_file = save_to_pending(caption, 'instagram', image_path)
-    
+
     return {
         'success': True,
         'status': 'pending',
@@ -269,45 +293,75 @@ def post_to_instagram(image_path: str, caption: str) -> dict:
 def _execute_instagram_post(image_path: str, caption: str) -> dict:
     """
     Internal function to actually execute the Instagram post after approval.
+    Instagram API requires a publicly accessible image URL.
+    Supports both local file paths and HTTP URLs.
     """
     try:
         # Step 1: Create media container
         container_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_ACCOUNT_ID}/media"
+
+        # Check if it's a URL or local file
+        is_url = image_path.startswith('http://') or image_path.startswith('https://')
         
-        # Get absolute path for the image
-        abs_image_path = os.path.abspath(image_path)
-        
-        container_params = {
-            'image_url': f'file://{abs_image_path}',
-            'caption': caption,
-            'access_token': META_ACCESS_TOKEN
-        }
-        
-        # For local files, we need to upload to a publicly accessible URL first
-        # This is a limitation of the Instagram API - it requires a public URL
-        # For now, we'll use the local path approach which works with some setups
-        # In production, upload to a CDN first
-        
-        container_response = requests.post(container_url, data=container_params)
-        container_result = container_response.json()
-        
+        if is_url:
+            # Use URL directly - Instagram API supports public URLs
+            container_params = {
+                'image_url': image_path,
+                'caption': caption,
+                'access_token': META_ACCESS_TOKEN
+            }
+            
+            container_response = requests.post(container_url, data=container_params)
+            container_result = container_response.json()
+        else:
+            # Local file - need to upload
+            abs_image_path = os.path.abspath(image_path)
+            
+            if not os.path.exists(abs_image_path):
+                return {'success': False, 'error': f'Image not found: {abs_image_path}'}
+            
+            # For local files, Instagram API needs a public URL
+            # We'll try with the file path first (works in some setups)
+            container_params = {
+                'image_url': f'file://{abs_image_path}',
+                'caption': caption,
+                'access_token': META_ACCESS_TOKEN
+            }
+            
+            container_response = requests.post(container_url, data=container_params)
+            container_result = container_response.json()
+            
+            # If that fails, try multipart upload
+            if 'id' not in container_result:
+                upload_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_ACCOUNT_ID}/media"
+                upload_params = {
+                    'caption': caption,
+                    'access_token': META_ACCESS_TOKEN
+                }
+                
+                with open(abs_image_path, 'rb') as img_file:
+                    files = {'file': ('image.jpg', img_file, 'image/jpeg')}
+                    container_response = requests.post(upload_url, data=upload_params, files=files)
+                
+                container_result = container_response.json()
+
         if 'id' not in container_result:
             error = container_result.get('error', {}).get('message', 'Failed to create media container')
             log_action('post_to_instagram', {'error': error}, 'error')
             return {'success': False, 'error': error}
-        
+
         container_id = container_result['id']
-        
+
         # Step 2: Publish the media
         publish_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_ACCOUNT_ID}/media_publish"
         publish_params = {
             'creation_id': container_id,
             'access_token': META_ACCESS_TOKEN
         }
-        
+
         publish_response = requests.post(publish_url, data=publish_params)
         publish_result = publish_response.json()
-        
+
         if 'id' in publish_result:
             log_action('post_to_instagram', {
                 'caption_preview': caption[:100],
@@ -323,7 +377,7 @@ def _execute_instagram_post(image_path: str, caption: str) -> dict:
             error = publish_result.get('error', {}).get('message', 'Failed to publish')
             log_action('post_to_instagram', {'error': error}, 'error')
             return {'success': False, 'error': error}
-            
+
     except Exception as e:
         log_action('post_to_instagram', {'error': str(e)}, 'error')
         return {'success': False, 'error': str(e)}
@@ -460,7 +514,8 @@ def get_instagram_summary() -> dict:
         seven_days_ago = datetime.now() - timedelta(days=7)
         if 'data' in media_result:
             for post in media_result['data']:
-                post_date = datetime.fromisoformat(post['timestamp'].replace('Z', '+00:00'))
+                post_timestamp = post['timestamp'].replace('Z', '+00:00')
+                post_date = datetime.fromisoformat(post_timestamp).replace(tzinfo=None)
                 if post_date >= seven_days_ago:
                     post_count += 1
         
